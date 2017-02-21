@@ -33,59 +33,87 @@ static void mkfs_usage()
 	MSG(0, "  -e [extension list] e.g. \"mp3,gif,mov\"\n");
 	MSG(0, "  -l label\n");
 	MSG(0, "  -o overprovision ratio [default:5]\n");
+	MSG(0, "  -O set feature\n");
+	MSG(0, "  -q quiet mode\n");
 	MSG(0, "  -s # of segments per section [default:1]\n");
 	MSG(0, "  -z # of sections per zone [default:1]\n");
 	MSG(0, "  -t 0: nodiscard, 1: discard [default:1]\n");
+	MSG(0, "  -m support SMR device [default:0]\n");
 	MSG(0, "sectors: number of sectors. [default: determined by device size]\n");
 	exit(1);
 }
 
+static void f2fs_show_info()
+{
+	MSG(0, "\n\tF2FS-tools: mkfs.f2fs Ver: %s (%s)\n\n",
+				F2FS_TOOLS_VERSION,
+				F2FS_TOOLS_DATE);
+	if (config.heap == 0)
+		MSG(0, "Info: Disable heap-based policy\n");
+
+	MSG(0, "Info: Debug level = %d\n", config.dbg_lv);
+	if (config.extension_list)
+		MSG(0, "Info: Add new extension list\n");
+
+	if (config.vol_label)
+		MSG(0, "Info: Label = %s\n", config.vol_label);
+	MSG(0, "Info: Trim is %s\n", config.trim ? "enabled": "disabled");
+}
+
+static void parse_feature(char *features)
+{
+	if (!strcmp(features, "encrypt")) {
+		config.feature |= cpu_to_le32(F2FS_FEATURE_ENCRYPT);
+	} else {
+		MSG(0, "Error: Wrong features\n");
+		mkfs_usage();
+	}
+}
+
 static void f2fs_parse_options(int argc, char *argv[])
 {
-	static const char *option_string = "a:d:e:l:o:s:z:t:";
+	static const char *option_string = "qa:d:e:l:mo:O:s:z:t:";
 	int32_t option=0;
 
 	while ((option = getopt(argc,argv,option_string)) != EOF) {
 		switch (option) {
+		case 'q':
+			config.dbg_lv = -1;
+			break;
 		case 'a':
 			config.heap = atoi(optarg);
-			if (config.heap == 0)
-				MSG(0, "Info: Disable heap-based policy\n");
 			break;
 		case 'd':
 			config.dbg_lv = atoi(optarg);
-			MSG(0, "Info: Debug level = %d\n", config.dbg_lv);
 			break;
 		case 'e':
 			config.extension_list = strdup(optarg);
-			MSG(0, "Info: Add new extension list\n");
 			break;
 		case 'l':		/*v: volume label */
 			if (strlen(optarg) > 512) {
-				MSG(0, "Error: Volume Label should be less than\
-						512 characters\n");
+				MSG(0, "Error: Volume Label should be less than "
+						"512 characters\n");
 				mkfs_usage();
 			}
 			config.vol_label = optarg;
-			MSG(0, "Info: Label = %s\n", config.vol_label);
+			break;
+		case 'm':
+			config.smr_mode = 1;
 			break;
 		case 'o':
-			config.overprovision = atoi(optarg);
-			MSG(0, "Info: Overprovision ratio = %u%%\n",
-								atoi(optarg));
+			config.overprovision = atof(optarg);
+			break;
+		case 'O':
+			parse_feature(strdup(optarg));
 			break;
 		case 's':
 			config.segs_per_sec = atoi(optarg);
-			MSG(0, "Info: Segments per section = %d\n",
-								atoi(optarg));
 			break;
 		case 'z':
 			config.secs_per_zone = atoi(optarg);
-			MSG(0, "Info: Sections per zone = %d\n", atoi(optarg));
 			break;
 		case 't':
 			config.trim = atoi(optarg);
-			MSG(0, "Info: Trim is %s\n", config.trim ? "enabled": "disabled");
 			break;
 		default:
 			MSG(0, "\tError: Unknown option %c\n",option);
@@ -100,30 +128,25 @@ static void f2fs_parse_options(int argc, char *argv[])
 	}
 	config.device_name = argv[optind];
 
-	if ((optind + 1) < argc) {
-		/* We have a sector count. */
+	if ((optind + 1) < argc)
 		config.total_sectors = atoll(argv[optind+1]);
-		MSG(0, "\ttotal_sectors=%08"PRIx64" (%s bytes)\n",
-				config.total_sectors, argv[optind+1]);
-	}
 
-	config.reserved_segments  =
-			(2 * (100 / config.overprovision + 1) + 6)
-			* config.segs_per_sec;
-	config.segs_per_zone = config.segs_per_sec * config.secs_per_zone;
+	if (config.smr_mode)
+		config.feature |= cpu_to_le32(F2FS_FEATURE_HMSMR);
 }
 
 int main(int argc, char *argv[])
 {
-	MSG(0, "\n\tF2FS-tools: mkfs.f2fs Ver: %s (%s)\n\n",
-				F2FS_TOOLS_VERSION,
-				F2FS_TOOLS_DATE);
 	f2fs_init_configuration(&config);
 
 	f2fs_parse_options(argc, argv);
 
-	if (f2fs_dev_is_umounted(&config) < 0)
+	f2fs_show_info();
+
+	if (f2fs_dev_is_umounted(&config) < 0) {
+		MSG(0, "\tError: Not available on mounted device!\n");
 		return -1;
+	}
 
 	if (f2fs_get_device_info(&config) < 0)
 		return -1;

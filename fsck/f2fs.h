@@ -60,6 +60,7 @@ struct f2fs_nm_info {
 
 	char *nat_bitmap;
 	int bitmap_size;
+	char *nid_bitmap;
 };
 
 struct seg_entry {
@@ -74,6 +75,7 @@ struct seg_entry {
 	unsigned char type;             /* segment type like CURSEG_XXX_TYPE */
 	unsigned char orig_type;        /* segment type like CURSEG_XXX_TYPE */
 	unsigned long long mtime;       /* modification time of the segment */
+	int dirty;
 };
 
 struct sec_entry {
@@ -123,6 +125,44 @@ struct f2fs_sm_info {
 	unsigned int ovp_segments;
 };
 
+struct f2fs_dentry_ptr {
+	struct inode *inode;
+	u8 *bitmap;
+	struct f2fs_dir_entry *dentry;
+	__u8 (*filename)[F2FS_SLOT_LEN];
+	int max;
+};
+
+struct dentry {
+	char *path;
+	char *full_path;
+	const u8 *name;
+	int len;
+	char *link;
+	unsigned long size;
+	u8 file_type;
+	u16 mode;
+	u16 uid;
+	u16 gid;
+	u32 *inode;
+	u32 mtime;
+	char *secon;
+	uint64_t capabilities;
+	nid_t ino;
+	nid_t pino;
+};
+
+/* different from dnode_of_data in kernel */
+struct dnode_of_data {
+	struct f2fs_node *inode_blk;	/* inode page */
+	struct f2fs_node *node_blk;	/* cached direct node page */
+	nid_t nid;
+	unsigned int ofs_in_node;
+	block_t data_blkaddr;
+	block_t node_blkaddr;
+	int idirty, ndirty;
+};
+
 struct f2fs_sb_info {
 	struct f2fs_fsck *fsck;
 
@@ -159,7 +199,7 @@ struct f2fs_sb_info {
 	u32 s_next_generation;                  /* for NFS support */
 
 	unsigned int cur_victim_sec;            /* current victim section num */
-
+	u32 free_segments;
 };
 
 static inline struct f2fs_super_block *F2FS_RAW_SUPER(struct f2fs_sb_info *sbi)
@@ -295,7 +335,7 @@ static inline block_t __end_block_addr(struct f2fs_sb_info *sbi)
 #define GET_R2L_SEGNO(sbi, segno)	(segno + FREE_I_START_SEGNO(sbi))
 
 #define START_BLOCK(sbi, segno)	(SM_I(sbi)->main_blkaddr +		\
-	(segno << sbi->log_blocks_per_seg))
+	((segno) << sbi->log_blocks_per_seg))
 
 static inline struct curseg_info *CURSEG_I(struct f2fs_sb_info *sbi, int type)
 {
@@ -313,19 +353,18 @@ static inline block_t sum_blk_addr(struct f2fs_sb_info *sbi, int base, int type)
 		- (base + 1) + type;
 }
 
+#define nats_in_cursum(jnl)             (le16_to_cpu(jnl->n_nats))
+#define sits_in_cursum(jnl)             (le16_to_cpu(jnl->n_sits))
 
-#define nats_in_cursum(sum)             (le16_to_cpu(sum->n_nats))
-#define sits_in_cursum(sum)             (le16_to_cpu(sum->n_sits))
-
-#define nat_in_journal(sum, i)          (sum->nat_j.entries[i].ne)
-#define nid_in_journal(sum, i)          (sum->nat_j.entries[i].nid)
-#define sit_in_journal(sum, i)          (sum->sit_j.entries[i].se)
-#define segno_in_journal(sum, i)        (sum->sit_j.entries[i].segno)
+#define nat_in_journal(jnl, i)          (jnl->nat_j.entries[i].ne)
+#define nid_in_journal(jnl, i)          (jnl->nat_j.entries[i].nid)
+#define sit_in_journal(jnl, i)          (jnl->sit_j.entries[i].se)
+#define segno_in_journal(jnl, i)        (jnl->sit_j.entries[i].segno)
 
 #define SIT_ENTRY_OFFSET(sit_i, segno)                                  \
-	(segno % sit_i->sents_per_block)
+	((segno) % sit_i->sents_per_block)
 #define SIT_BLOCK_OFFSET(sit_i, segno)                                  \
-	(segno / SIT_ENTRY_PER_BLOCK)
+	((segno) / SIT_ENTRY_PER_BLOCK)
 #define TOTAL_SEGS(sbi) (SM_I(sbi)->main_segments)
 
 static inline bool IS_VALID_NID(struct f2fs_sb_info *sbi, u32 nid)
@@ -341,7 +380,7 @@ static inline bool IS_VALID_BLK_ADDR(struct f2fs_sb_info *sbi, u32 addr)
 
 	if (addr >= F2FS_RAW_SUPER(sbi)->block_count ||
 				addr < SM_I(sbi)->main_blkaddr) {
-		ASSERT_MSG("block addr [0x%x]\n", addr);
+		DBG(1, "block addr [0x%x]\n", addr);
 		return 0;
 	}
 
@@ -353,6 +392,22 @@ static inline bool IS_VALID_BLK_ADDR(struct f2fs_sb_info *sbi, u32 addr)
 			return 0;
 	}
 	return 1;
+}
+
+static inline int IS_CUR_SEGNO(struct f2fs_sb_info *sbi, u32 segno, int type)
+{
+	int i;
+
+	for (i = 0; i < NO_CHECK_TYPE; i++) {
+		struct curseg_info *curseg = CURSEG_I(sbi, i);
+
+		if (type == i)
+			continue;
+
+		if (segno == curseg->segno)
+			return 1;
+	}
+	return 0;
 }
 
 static inline u64 BLKOFF_FROM_MAIN(struct f2fs_sb_info *sbi, u64 blk_addr)
@@ -381,7 +436,44 @@ static inline void node_info_from_raw_nat(struct node_info *ni,
 	ni->version = raw_nat->version;
 }
 
+static inline void set_summary(struct f2fs_summary *sum, nid_t nid,
+			unsigned int ofs_in_node, unsigned char version)
+{
+	sum->nid = cpu_to_le32(nid);
+	sum->ofs_in_node = cpu_to_le16(ofs_in_node);
+	sum->version = version;
+}
+
+#define S_SHIFT 12
+static unsigned char f2fs_type_by_mode[S_IFMT >> S_SHIFT] = {
+	[S_IFREG >> S_SHIFT]    = F2FS_FT_REG_FILE,
+	[S_IFDIR >> S_SHIFT]    = F2FS_FT_DIR,
+	[S_IFCHR >> S_SHIFT]    = F2FS_FT_CHRDEV,
+	[S_IFBLK >> S_SHIFT]    = F2FS_FT_BLKDEV,
+	[S_IFIFO >> S_SHIFT]    = F2FS_FT_FIFO,
+	[S_IFSOCK >> S_SHIFT]   = F2FS_FT_SOCK,
+	[S_IFLNK >> S_SHIFT]    = F2FS_FT_SYMLINK,
+};
+
+static inline void set_de_type(struct f2fs_dir_entry *de, umode_t mode)
+{
+	de->file_type = f2fs_type_by_mode[(mode & S_IFMT) >> S_SHIFT];
+}
+
+static inline void *inline_xattr_addr(struct f2fs_inode *inode)
+{
+	return (void *)&(inode->i_addr[DEF_ADDRS_PER_INODE_INLINE_XATTR]);
+}
+
+static inline int inline_xattr_size(struct f2fs_inode *inode)
+{
+	if (inode->i_inline & F2FS_INLINE_XATTR)
+		return F2FS_INLINE_XATTR_ADDRS << 2;
+	return 0;
+}
+
 extern int lookup_nat_in_journal(struct f2fs_sb_info *sbi, u32 nid, struct f2fs_nat_entry *ne);
 #define IS_SUM_NODE_SEG(footer)		(footer.entry_type == SUM_TYPE_NODE)
+#define IS_SUM_DATA_SEG(footer)		(footer.entry_type == SUM_TYPE_DATA)
 
 #endif /* _F2FS_H_ */

@@ -27,6 +27,13 @@
 #include <linux/falloc.h>
 #endif
 
+#ifndef BLKDISCARD
+#define BLKDISCARD	_IO(0x12,119)
+#endif
+#ifndef BLKSECDISCARD
+#define BLKSECDISCARD	_IO(0x12,125)
+#endif
+
 int f2fs_trim_device()
 {
 	unsigned long long range[2];
@@ -46,7 +53,7 @@ int f2fs_trim_device()
 #if defined(WITH_BLKDISCARD) && defined(BLKDISCARD)
 	MSG(0, "Info: Discarding device\n");
 	if (S_ISREG(stat_buf.st_mode)) {
-#ifdef FALLOC_FL_PUNCH_HOLE
+#if defined(HAVE_FALLOCATE) && defined(FALLOC_FL_PUNCH_HOLE)
 		if (fallocate(config.fd, FALLOC_FL_PUNCH_HOLE | FALLOC_FL_KEEP_SIZE,
 				range[0], range[1]) < 0) {
 			MSG(0, "Info: fallocate(PUNCH_HOLE|KEEP_SIZE) is failed\n");
@@ -54,8 +61,17 @@ int f2fs_trim_device()
 #endif
 		return 0;
 	} else if (S_ISBLK(stat_buf.st_mode)) {
+#ifdef BLKSECDISCARD
+		if (ioctl(config.fd, BLKSECDISCARD, &range) < 0) {
+			MSG(0, "Info: This device doesn't support BLKSECDISCARD\n");
+		} else {
+			MSG(0, "Info: Secure Discarded %lu sectors\n",
+						config.total_sectors);
+			return 0;
+		}
+#endif
 		if (ioctl(config.fd, BLKDISCARD, &range) < 0) {
-			MSG(0, "Info: This device doesn't support TRIM\n");
+			MSG(0, "Info: This device doesn't support BLKDISCARD\n");
 		} else {
 			MSG(0, "Info: Discarded %lu sectors\n",
 						config.total_sectors);

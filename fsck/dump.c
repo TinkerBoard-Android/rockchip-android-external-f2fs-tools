@@ -15,57 +15,163 @@
 
 #define BUF_SZ	80
 
-const char *seg_type_name[SEG_TYPE_MAX] = {
+const char *seg_type_name[SEG_TYPE_MAX + 1] = {
 	"SEG_TYPE_DATA",
 	"SEG_TYPE_CUR_DATA",
 	"SEG_TYPE_NODE",
 	"SEG_TYPE_CUR_NODE",
+	"SEG_TYPE_NONE",
 };
+
+void nat_dump(struct f2fs_sb_info *sbi, int start_nat, int end_nat)
+{
+	struct f2fs_super_block *sb = F2FS_RAW_SUPER(sbi);
+	struct f2fs_nm_info *nm_i = NM_I(sbi);
+	struct f2fs_nat_block *nat_block;
+	struct f2fs_node *node_block;
+	u32 nr_nat_blks, nid;
+	pgoff_t block_off;
+	pgoff_t block_addr;
+	char buf[BUF_SZ];
+	int seg_off;
+	int fd, ret, pack = 1;
+	unsigned int i;
+
+	nat_block = (struct f2fs_nat_block *)calloc(BLOCK_SZ, 1);
+	node_block = (struct f2fs_node *)calloc(BLOCK_SZ, 1);
+	ASSERT(nat_block);
+
+	nr_nat_blks = get_sb(segment_count_nat) <<
+				(sbi->log_blocks_per_seg - 1);
+	fd = open("dump_nat", O_CREAT|O_WRONLY|O_TRUNC, 0666);
+	ASSERT(fd >= 0);
+
+	for (block_off = 0; block_off < nr_nat_blks; block_off++) {
+
+		seg_off = block_off >> sbi->log_blocks_per_seg;
+		block_addr = (pgoff_t)(nm_i->nat_blkaddr +
+			(seg_off << sbi->log_blocks_per_seg << 1) +
+			(block_off & ((1 << sbi->log_blocks_per_seg) - 1)));
+
+		if (f2fs_test_bit(block_off, nm_i->nat_bitmap)) {
+			block_addr += sbi->blocks_per_seg;
+			pack = 2;
+		}
+
+		ret = dev_read_block(nat_block, block_addr);
+		ASSERT(ret >= 0);
+
+		nid = block_off * NAT_ENTRY_PER_BLOCK;
+		for (i = 0; i < NAT_ENTRY_PER_BLOCK; i++) {
+			struct f2fs_nat_entry raw_nat;
+			struct node_info ni;
+			ni.nid = nid + i;
+
+			if(nid + i  == 0 || nid + i  == 1 || nid + i == 2 )
+				continue;
+			if (lookup_nat_in_journal(sbi, nid + i,
+							&raw_nat) >= 0) {
+				node_info_from_raw_nat(&ni, &raw_nat);
+				ret = dev_read_block(node_block, ni.blk_addr);
+				ASSERT(ret >= 0);
+				if (ni.blk_addr != 0x0) {
+					memset(buf, 0, BUF_SZ);
+					snprintf(buf, BUF_SZ, "nid:%5u\tino:%5u\toffset:%5u"
+							"\tblkaddr:%10u\tpack:%d\n",ni.nid, ni.ino,
+							node_block->footer.flag >> OFFSET_BIT_SHIFT,
+									ni.blk_addr, pack);
+					ret = write(fd, buf, strlen(buf));
+					ASSERT(ret >= 0);
+				}
+
+			} else {
+				node_info_from_raw_nat(&ni,
+						&nat_block->entries[i]);
+				if (ni.blk_addr == 0)
+					continue;
+
+				ret = dev_read_block(node_block, ni.blk_addr);
+				ASSERT(ret >= 0);
+				memset(buf, 0, BUF_SZ);
+				snprintf(buf, BUF_SZ, "nid:%5u\tino:%5u\toffset:%5u"
+						"\tblkaddr:%10u\tpack:%d\n",ni.nid,
+						ni.ino,node_block->footer.flag >>
+						OFFSET_BIT_SHIFT,ni.blk_addr, pack);
+				ret = write(fd, buf, strlen(buf));
+				ASSERT(ret >= 0);
+			}
+		}
+	}
+
+	free(nat_block);
+	free(node_block);
+
+	close(fd);
+}
 
 void sit_dump(struct f2fs_sb_info *sbi, int start_sit, int end_sit)
 {
 	struct seg_entry *se;
-	int segno;
+	struct sit_info *sit_i = SIT_I(sbi);
+	unsigned int segno;
 	char buf[BUF_SZ];
 	u32 free_segs = 0;;
 	u64 valid_blocks = 0;
 	int ret;
-	int fd;
+	int fd, i;
+	unsigned int offset;
 
 	fd = open("dump_sit", O_CREAT|O_WRONLY|O_TRUNC, 0666);
 	ASSERT(fd >= 0);
 
+	snprintf(buf, BUF_SZ, "segment_type(0:HD, 1:WD, 2:CD, "
+						"3:HN, 4:WN, 5:CN)\n");
+	ret = write(fd, buf, strlen(buf));
+	ASSERT(ret >= 0);
+
 	for (segno = start_sit; segno < end_sit; segno++) {
 		se = get_seg_entry(sbi, segno);
-
+		offset = SIT_BLOCK_OFFSET(sit_i, segno);
+		i = f2fs_test_bit(offset, sit_i->sit_bitmap)?2:1;
 		memset(buf, 0, BUF_SZ);
-		snprintf(buf, BUF_SZ, "%5d %8d\n", segno, se->valid_blocks);
+		snprintf(buf, BUF_SZ, "\nsegno:%8u\tvblocks:%3u\tseg_type:%d\tsit_pack:%d\n\n",
+							segno, se->valid_blocks, se->type, i);
 
 		ret = write(fd, buf, strlen(buf));
 		ASSERT(ret >= 0);
 
-		DBG(4, "SIT[0x%3x] : 0x%x\n", segno, se->valid_blocks);
 		if (se->valid_blocks == 0x0) {
 			free_segs++;
 		} else {
 			ASSERT(se->valid_blocks <= 512);
 			valid_blocks += se->valid_blocks;
+
+			for (i = 0; i < 64; i++) {
+				memset(buf, 0, BUF_SZ);
+				snprintf(buf, BUF_SZ, "  %02x", *(se->cur_valid_map + i));
+				ret = write(fd, buf, strlen(buf));
+				ASSERT(ret >= 0);
+				if((i+1) % 16 == 0) {
+					snprintf(buf, BUF_SZ, "\n");
+					ret = write(fd, buf, strlen(buf));
+					ASSERT(ret >= 0);
+				}
+			}
 		}
 	}
 
 	memset(buf, 0, BUF_SZ);
-	snprintf(buf, BUF_SZ, "valid_segs:%d\t free_segs:%d\n",
-			SM_I(sbi)->main_segments - free_segs, free_segs);
+	snprintf(buf, BUF_SZ, "valid_blocks:[0x%" PRIx64 "]\tvalid_segs:%d\t free_segs:%d\n",
+			valid_blocks, SM_I(sbi)->main_segments - free_segs, free_segs);
 	ret = write(fd, buf, strlen(buf));
 	ASSERT(ret >= 0);
 
 	close(fd);
-	DBG(1, "Blocks [0x%" PRIx64 "] Free Segs [0x%x]\n", valid_blocks, free_segs);
 }
 
 void ssa_dump(struct f2fs_sb_info *sbi, int start_ssa, int end_ssa)
 {
-	struct f2fs_summary_block sum_blk;
+	struct f2fs_summary_block *sum_blk;
 	char buf[BUF_SZ];
 	int segno, i, ret;
 	int fd;
@@ -80,7 +186,7 @@ void ssa_dump(struct f2fs_sb_info *sbi, int start_ssa, int end_ssa)
 	ASSERT(ret >= 0);
 
 	for (segno = start_ssa; segno < end_ssa; segno++) {
-		ret = get_sum_block(sbi, segno, &sum_blk);
+		sum_blk = get_sum_block(sbi, segno, &ret);
 
 		memset(buf, 0, BUF_SZ);
 		switch (ret) {
@@ -108,10 +214,13 @@ void ssa_dump(struct f2fs_sb_info *sbi, int start_ssa, int end_ssa)
 				ASSERT(ret >= 0);
 			}
 			snprintf(buf, BUF_SZ, "[%3d: %6x]", i,
-					le32_to_cpu(sum_blk.entries[i].nid));
+					le32_to_cpu(sum_blk->entries[i].nid));
 			ret = write(fd, buf, strlen(buf));
 			ASSERT(ret >= 0);
 		}
+		if (ret == SEG_TYPE_NODE || ret == SEG_TYPE_DATA ||
+					ret == SEG_TYPE_MAX)
+			free(sum_blk);
 	}
 	close(fd);
 }
@@ -418,7 +527,9 @@ int dump_info_from_blkaddr(struct f2fs_sb_info *sbi, u32 blk_addr)
 	DBG(1, " - Segno              [0x%x]\n", GET_SEGNO(sbi, blk_addr));
 	DBG(1, " - Offset             [0x%x]\n", OFFSET_IN_SEG(sbi, blk_addr));
 	DBG(1, "SUM.nid               [0x%x]\n", nid);
-	DBG(1, "SUM.type              [%s]\n", seg_type_name[type]);
+	DBG(1, "SUM.type              [%s]\n", type >= 0 ?
+						seg_type_name[type] :
+						"Broken");
 	DBG(1, "SUM.version           [%d]\n", sum_entry.version);
 	DBG(1, "SUM.ofs_in_node       [0x%x]\n", sum_entry.ofs_in_node);
 	DBG(1, "NAT.blkaddr           [0x%x]\n", ni.blk_addr);
