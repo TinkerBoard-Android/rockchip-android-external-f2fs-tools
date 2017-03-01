@@ -90,41 +90,6 @@ LOCAL_SYSTEM_SHARED_LIBRARIES := libc
 LOCAL_MODULE_TAGS := optional
 include $(BUILD_EXECUTABLE)
 
-include $(CLEAR_VARS)
-# The LOCAL_MODULE name is referenced by the code. Don't change it.
-LOCAL_MODULE := fsck_f2fs
-
-LOCAL_FORCE_STATIC_EXECUTABLE := true
-
-LOCAL_MODULE_PATH := $(TARGET_RECOVERY_ROOT_OUT)/sbin
-
-LOCAL_SRC_FILES := \
-        fsck/defrag.c \
-        fsck/dir.c \
-        fsck/dump.c \
-        fsck/fsck.c \
-        fsck/main.c \
-        fsck/mount.c \
-        fsck/node.c \
-        fsck/resize.c \
-        fsck/segment.c \
-        fsck/sload.c \
-        fsck/xattr.c \
-        lib/libf2fs.c \
-        lib/libf2fs_io.c \
-
-ALL_TOOLS := \
-        resize.f2fs \
-
-LOCAL_C_INCLUDES := $(common_C_INCLUDES)
-LOCAL_CFLAGS := $(version_CFLAGS)
-LOCAL_STATIC_LIBRARIES := libc libf2fs_fmt libext2_uuid_static libselinux
-LOCAL_MODULE_TAGS := optional
-
-LOCAL_POST_INSTALL_CMD := $(hide) $(foreach t,$(ALL_TOOLS),ln -sf fsck_f2fs $(LOCAL_MODULE_PATH)/$(t);)
-
-include $(BUILD_EXECUTABLE)
-
 #----------------------------------------------------------
 include $(CLEAR_VARS)
 # The LOCAL_MODULE name is referenced by the code. Don't change it.
@@ -137,19 +102,11 @@ LOCAL_SRC_FILES := \
 	lib/libf2fs.c \
 	lib/libf2fs_io.c \
 
-ALL_TOOLS := \
-        defrag.f2fs \
-        dump.f2fs \
-        resize.f2fs
-
 LOCAL_C_INCLUDES := $(common_C_INCLUDES)
 LOCAL_CFLAGS := $(version_CFLAGS)
 LOCAL_SHARED_LIBRARIES := libext2_uuid
 LOCAL_SYSTEM_SHARED_LIBRARIES := libc
 LOCAL_MODULE_TAGS := optional
-
-LOCAL_POST_INSTALL_CMD := $(hide) $(foreach t,$(ALL_TOOLS),ln -sf fsck.f2fs $(TARGET_OUT)/bin/$(t);)
-
 include $(BUILD_EXECUTABLE)
 
 #----------------------------------------------------------
