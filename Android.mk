@@ -158,7 +158,7 @@ LOCAL_SHARED_LIBRARIES := libext2_uuid libselinux
 LOCAL_STATIC_LIBRARIES := libf2fs_fmt
 LOCAL_SYSTEM_SHARED_LIBRARIES := libc
 LOCAL_MODULE_TAGS := optional
-
+LOCAL_MODULE_PATH := $(TARGET_RECOVERY_ROOT_OUT)/sbin
 LOCAL_POST_INSTALL_CMD := $(hide) $(foreach t,$(ALL_TOOLS),ln -sf fsck.f2fs $(TARGET_OUT)/bin/$(t);)
 
 include $(BUILD_EXECUTABLE)
