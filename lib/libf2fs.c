@@ -626,10 +626,12 @@ int f2fs_get_device_info(struct f2fs_configuration *c)
 		total_sectors /= c->sector_size;
 		c->total_sectors = total_sectors;
 #endif
-		if (ioctl(fd, HDIO_GETGEO, &geom) < 0)
+		// work around for fix wrong segment_count
+		//if (ioctl(fd, HDIO_GETGEO, &geom) < 0)
 			c->start_sector = 0;
-		else
-			c->start_sector = geom.start;
+		//else
+		//	c->start_sector = geom.start;
+		MSG(0, "c->start_sector=%d\n", c->start_sector);
 	} else {
 		MSG(0, "\tError: Volume type is not supported!!!\n");
 		return -1;
