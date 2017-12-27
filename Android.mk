@@ -62,6 +62,22 @@ include $(BUILD_HOST_SHARED_LIBRARY)
 #----------------------------------------------------------
 include $(CLEAR_VARS)
 # The LOCAL_MODULE name is referenced by the code. Don't change it.
+LOCAL_MODULE := mkfs_host.f2fs
+
+# LOCAL_FORCE_STATIC_EXECUTABLE := true
+
+LOCAL_SRC_FILES := \
+        lib/libf2fs_io.c \
+        mkfs/f2fs_format_main.c
+LOCAL_C_INCLUDES := $(common_C_INCLUDES)
+LOCAL_CFLAGS := $(version_CFLAGS)
+LOCAL_STATIC_LIBRARIES := libf2fs_fmt_host libext2_uuid-host
+LOCAL_MODULE_TAGS := optional
+include $(BUILD_HOST_EXECUTABLE)
+
+#----------------------------------------------------------
+include $(CLEAR_VARS)
+# The LOCAL_MODULE name is referenced by the code. Don't change it.
 LOCAL_MODULE := mkfs.f2fs
 
 # mkfs.f2fs is used in recovery: must be static.
