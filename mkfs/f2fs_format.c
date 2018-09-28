@@ -1155,8 +1155,8 @@ static int f2fs_write_qf_inode(int qtype)
 
 	raw_node->i.i_mode = cpu_to_le16(0x8180);
 	raw_node->i.i_links = cpu_to_le32(1);
-	raw_node->i.i_uid = cpu_to_le32(getuid());
-	raw_node->i.i_gid = cpu_to_le32(getgid());
+	raw_node->i.i_uid = 0;//cpu_to_le32(getuid());
+	raw_node->i.i_gid = 0;//cpu_to_le32(getgid());
 
 	raw_node->i.i_size = cpu_to_le64(1024 * 6); /* Hard coded */
 	raw_node->i.i_blocks = cpu_to_le64(1 + QUOTA_DATA(qtype));
