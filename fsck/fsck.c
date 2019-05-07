@@ -208,9 +208,11 @@ static int is_valid_ssa_node_blk(struct f2fs_sb_info *sbi, u32 nid,
 		ASSERT(ret2 >= 0);
 	}
 out:
+#if 0
 	if (type == SEG_TYPE_NODE || type == SEG_TYPE_DATA ||
 					type == SEG_TYPE_MAX)
 		free(sum_blk);
+#endif
 	return ret;
 }
 
@@ -334,9 +336,11 @@ static int is_valid_ssa_data_blk(struct f2fs_sb_info *sbi, u32 blk_addr,
 		ASSERT(ret2 >= 0);
 	}
 out:
+#if 0
 	if (type == SEG_TYPE_NODE || type == SEG_TYPE_DATA ||
 					type == SEG_TYPE_MAX)
 		free(sum_blk);
+#endif
 	return ret;
 }
 

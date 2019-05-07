@@ -223,10 +223,12 @@ static void move_ssa(struct f2fs_sb_info *sbi, unsigned int segno,
 				IS_SUM_NODE_SEG(sum_blk->footer),
 				new_sum_blk_addr);
 	}
+#if 0
 	if (type == SEG_TYPE_NODE || type == SEG_TYPE_DATA ||
 			type == SEG_TYPE_MAX) {
 		free(sum_blk);
 	}
+#endif
 	DBG(1, "Info: Done to migrate SSA blocks\n");
 }
 

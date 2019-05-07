@@ -1535,9 +1535,11 @@ void update_sum_entry(struct f2fs_sb_info *sbi, block_t blk_addr,
 	ret = dev_write_block(sum_blk, GET_SUM_BLKADDR(sbi, segno));
 	ASSERT(ret >= 0);
 
+#if 0
 	if (type == SEG_TYPE_NODE || type == SEG_TYPE_DATA ||
 					type == SEG_TYPE_MAX)
 		free(sum_blk);
+#endif
 }
 
 static void restore_curseg_summaries(struct f2fs_sb_info *sbi)
@@ -1691,6 +1693,88 @@ struct seg_entry *get_seg_entry(struct f2fs_sb_info *sbi,
 	return &sit_i->sentries[segno];
 }
 
+#define MAX_SUM_BUF 8
+
+struct f2fs_sum_block
+{
+	struct f2fs_summary_block *sum_blk;
+	u64 ssa_blk;
+};
+
+struct f2fs_summary_buffer
+{
+	struct f2fs_sum_block sum_buf[MAX_SUM_BUF];
+	u32 index;
+	u32 init_finish;
+};
+
+struct f2fs_summary_buffer g_sum_buf;
+
+static struct f2fs_summary_block *get_sum_buf(u64 ssa_blk)
+{
+	int i;
+
+	if (g_sum_buf.init_finish != 0x55) {
+		for (i = 0; i < MAX_SUM_BUF; i++) {
+			g_sum_buf.sum_buf[i].ssa_blk = -1;
+			g_sum_buf.sum_buf[i].sum_blk = NULL;
+		}
+		g_sum_buf.index = 0;
+		g_sum_buf.init_finish = 0x55;
+		return NULL;
+	}
+
+	for (i = 0; i < MAX_SUM_BUF; i++) {
+		if (g_sum_buf.sum_buf[i].ssa_blk == ssa_blk) {
+			return g_sum_buf.sum_buf[i].sum_blk;
+		}
+	}
+
+	return NULL;
+}
+
+static void put_sum_buf(struct f2fs_summary_block *sum_blk, u64 ssa_blk)
+{
+	int i;
+
+	if (g_sum_buf.init_finish != 0x55)
+		return;
+
+	for (i = 0; i < MAX_SUM_BUF; i++) {
+		if (g_sum_buf.sum_buf[i].ssa_blk == ssa_blk &&
+			g_sum_buf.sum_buf[i].sum_blk != sum_blk) {
+			free(g_sum_buf.sum_buf[i].sum_blk);
+			g_sum_buf.sum_buf[i].sum_blk = sum_blk;
+			return;
+		}
+	}
+
+	i = ++g_sum_buf.index % MAX_SUM_BUF;
+	if (g_sum_buf.sum_buf[i].ssa_blk != -1 && 
+		g_sum_buf.sum_buf[i].sum_blk != NULL) {
+		free(g_sum_buf.sum_buf[i].sum_blk);
+	}
+	g_sum_buf.sum_buf[i].ssa_blk = ssa_blk;
+	g_sum_buf.sum_buf[i].sum_blk = sum_blk;
+}
+
+static void release_sum_buf()
+{
+	int i;
+
+	if (g_sum_buf.init_finish != 0x55)
+		return;
+
+	for (i = 0; i < MAX_SUM_BUF; i++) {
+		if (g_sum_buf.sum_buf[i].ssa_blk != -1 && 
+			g_sum_buf.sum_buf[i].sum_blk != NULL) {
+			free(g_sum_buf.sum_buf[i].sum_blk);
+			g_sum_buf.sum_buf[i].ssa_blk = -1;
+			g_sum_buf.sum_buf[i].sum_blk = NULL;
+		}
+	}
+}
+
 struct f2fs_summary_block *get_sum_block(struct f2fs_sb_info *sbi,
 				unsigned int segno, int *ret_type)
 {
@@ -1733,11 +1817,16 @@ struct f2fs_summary_block *get_sum_block(struct f2fs_sb_info *sbi,
 		}
 	}
 
-	sum_blk = calloc(BLOCK_SZ, 1);
-	ASSERT(sum_blk);
+	sum_blk = get_sum_buf(ssa_blk);
 
-	ret = dev_read_block(sum_blk, ssa_blk);
-	ASSERT(ret >= 0);
+	if (!sum_blk) {
+		sum_blk = calloc(BLOCK_SZ, 1);
+		ASSERT(sum_blk);
+
+		ret = dev_read_block(sum_blk, ssa_blk);
+		ASSERT(ret >= 0);
+		put_sum_buf(sum_blk, ssa_blk);
+	}
 
 	if (IS_SUM_NODE_SEG(sum_blk->footer))
 		*ret_type = SEG_TYPE_NODE;
@@ -1760,9 +1849,11 @@ int get_sum_entry(struct f2fs_sb_info *sbi, u32 blk_addr,
 	sum_blk = get_sum_block(sbi, segno, &type);
 	memcpy(sum_entry, &(sum_blk->entries[offset]),
 				sizeof(struct f2fs_summary));
+#if 0
 	if (type == SEG_TYPE_NODE || type == SEG_TYPE_DATA ||
 					type == SEG_TYPE_MAX)
 		free(sum_blk);
+#endif
 	return type;
 }
 
@@ -2707,4 +2798,5 @@ void f2fs_do_umount(struct f2fs_sb_info *sbi)
 
 	free(sbi->ckpt);
 	free(sbi->raw_super);
+	release_sum_buf();
 }

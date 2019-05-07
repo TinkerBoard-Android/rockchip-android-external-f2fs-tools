@@ -220,9 +220,11 @@ void ssa_dump(struct f2fs_sb_info *sbi, int start_ssa, int end_ssa)
 			ret = write(fd, buf, strlen(buf));
 			ASSERT(ret >= 0);
 		}
+#if 0
 		if (type == SEG_TYPE_NODE || type == SEG_TYPE_DATA ||
 					type == SEG_TYPE_MAX)
 			free(sum_blk);
+#endif
 	}
 	close(fd);
 }
